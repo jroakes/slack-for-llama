@@ -1,0 +1,48 @@
+# Project-specific files and directories
+llama3_slack_finetuned/
+data/
+data.zip
+wandb/
+example-llama3-training.py
+
+# Generated data files
+*.pt
+*.txt
+!requirements.txt
+
+# Notebooks and documentation
+*.ipynb
+response.md
+all_code.txt
+
+# Python cache files
+__pycache__/
+*/__pycache__/
+
+# IDE and Editor files
+.vscode/
+.idea/
+.idea/this_studio.iml
+.ipython/
+.lightning_studio/
+
+# Environment and configuration files
+.env
+.lightning_studio/
+.lightningignore
+.config/
+.nv/
+.netrc
+
+# Shell and system files
+.bashrc
+.zshrc
+.zsh_history
+.zcompdump
+.python_history
+.sudo_as_admin_successful
+.vimrc
+.condarc
+.hushlogin
+.gitconfig
+.profile
