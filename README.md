@@ -95,3 +95,5 @@ MIT
 ## Acknowledgments
 
 - Thanks to Meta AI for the Llama 3 model
+- https://www.kaggle.com/code/mengqizou/llama-3b-qlora
+

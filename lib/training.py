@@ -1,3 +1,5 @@
+# training.py
+
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -18,16 +20,12 @@ from datasets import Dataset
 
 def fine_tune_model(
     dataset: Dataset, 
+    tokenizer: AutoTokenizer,  # Add tokenizer as an argument
     output_dir: str, 
     model_name: str = "meta-llama/Llama-3.2-3B",
 ) -> Optional[str]:
     """
-    Fine-tune a Llama 3.2 model using QLoRA and PEFT optimizations.
-    
-    Args:
-        dataset: HuggingFace Dataset with train/test split
-        output_dir: Directory to save the fine-tuned model
-        model_name: Name/path of the base model
+    Fine-tune a Llama 3.2 model using QLoRA and PEFT optimizations
     """
     try:
         torch_dtype = torch.float16
@@ -50,9 +48,8 @@ def fine_tune_model(
             torch_dtype=torch_dtype,
         )
         
-        # Load and setup tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model, tokenizer = setup_chat_format(model, tokenizer)
+        # Use the provided tokenizer
+        model, _ = setup_chat_format(model, tokenizer)  # Use the passed tokenizer
         
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
@@ -74,7 +71,7 @@ def fine_tune_model(
         # Apply LoRA
         model = get_peft_model(model, peft_config)
         
-        # Training arguments - updated to use new parameter names
+        # Training arguments
         training_args = TrainingArguments(
             output_dir=output_dir,
             per_device_train_batch_size=5,
@@ -114,7 +111,7 @@ def fine_tune_model(
         
         # Save the model
         trainer.model.save_pretrained(output_dir)
-        tokenizer.save_pretrained(output_dir)
+        tokenizer.save_pretrained(output_dir)  # Save the tokenizer
         print(f"Model fine-tuned and saved to {output_dir}")
         
         return output_dir

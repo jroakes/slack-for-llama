@@ -1,5 +1,6 @@
 # Project-specific files and directories
 llama3_slack_finetuned/
+llama3_slack_finetuned_bak/
 data/
 data.zip
 wandb/
