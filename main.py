@@ -1,4 +1,4 @@
-# main.py
+"""Main File for the application."""
 
 import logging
 import argparse
@@ -9,7 +9,6 @@ from lib.preprocess import preprocess_data
 from lib.training import fine_tune_model
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
-from trl import setup_chat_format  
 
 def setup_signal_handlers():
     def signal_handler(sig, frame):
@@ -18,57 +17,54 @@ def setup_signal_handlers():
     signal.signal(signal.SIGINT, signal_handler)
 
 def train() -> Optional[str]:
-    """Run the training workflow."""
+    """Run the training workflow.
+    
+    Returns:
+        Optional[str]: Path to the output model directory if successful, None otherwise
+    """
     try:
-        # Updated to use Llama 3.2 3B model with proper configuration
+        # Updated to use Llama 3.2 3B model
         model = "meta-llama/Llama-3.2-3B"
         model_dir = "llama3_slack_finetuned"
-
+        
         logging.info("Starting data preprocessing...")
-        # Preprocess the data with more detailed logging
-        dataset, tokenizer = preprocess_data(model=model)
+        # Preprocess the data
+        dataset = preprocess_data(model=model)
 
         if not dataset:
-            logging.error("Preprocessing failed - no valid dataset created")
+            logging.error("Preprocessing failed")
             return None
 
-        logging.info(f"Dataset created successfully - {len(dataset['train'])} training examples")
-        
         logging.info("Starting model fine-tuning...")
-        # Updated training configuration
+        # Fine-tune the model
         output_dir = fine_tune_model(
             dataset=dataset,
-            tokenizer=tokenizer,
             output_dir=model_dir,
             model_name=model
         )
-
+        
         return output_dir
 
     except Exception as e:
-        logging.error(f"Error in training execution: {str(e)}")
-        import traceback
-        logging.error(f"Traceback: {traceback.format_exc()}")
+        logging.error(f"Error in training execution: {e}")
         return None
 
-
 def chat_loop(model_path: str):
-    """Run an interactive chat loop with the fine-tuned model."""
+    """Run an interactive chat loop with the fine-tuned model.
+    
+    Args:
+        model_path: Path to the fine-tuned model directory
+    """
     try:
         logging.info("Loading model and tokenizer...")
         
-        # Load tokenizer first
-        tokenizer = AutoTokenizer.from_pretrained(model_path)  
-
-        # Load model with the tokenizer
+        # Load model and tokenizer
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
             device_map="auto",
-            torch_dtype=torch.float16,
-            tokenizer=tokenizer  # Pass the tokenizer here
+            torch_dtype=torch.float16
         )
-
-        # No setup_chat_format needed since we saved these configs during training
+        tokenizer = AutoTokenizer.from_pretrained(model_path)
         
         logging.info("Starting chat session... (Type 'exit' to end the session)")
         print("\nChat session started. You can start chatting with the model.")
@@ -76,8 +72,10 @@ def chat_loop(model_path: str):
         print("-" * 50)
         
         while True:
+            # Get user input
             user_input = input("\nYou: ").strip()
             
+            # Check for exit command
             if user_input.lower() == 'exit':
                 print("\nEnding chat session...")
                 break
@@ -85,6 +83,7 @@ def chat_loop(model_path: str):
             if not user_input:
                 continue
             
+            # Format the input as a chat message
             messages = [
                 {
                     "role": "user",
@@ -92,6 +91,7 @@ def chat_loop(model_path: str):
                 }
             ]
             
+            # Generate response
             prompt = tokenizer.apply_chat_template(
                 messages, 
                 tokenize=False, 
@@ -109,16 +109,16 @@ def chat_loop(model_path: str):
                 **inputs,
                 max_length=512,
                 num_return_sequences=1,
-                temperature=0.7
+                temperature=0.2
             )
             
+            # Decode and print the response
             response = tokenizer.decode(outputs[0], skip_special_tokens=True)
             print("\nAssistant:", response)
 
     except Exception as e:
         logging.error(f"Error in chat session: {e}")
         print("\nAn error occurred. Ending chat session...")
-        print(f"Error details: {str(e)}")
     
     print("\nChat session ended.")
 
@@ -127,7 +127,7 @@ def main():
     parser = argparse.ArgumentParser(description='Slack conversation model training and testing')
     parser.add_argument('--train', action='store_true', help='Run the training workflow')
     parser.add_argument('--test', action='store_true', help='Start an interactive chat session with the trained model')
-    parser.add_argument('--model-dir', type=str, default='llama3_slack_finetuned',
+    parser.add_argument('--model-dir', type=str, default='llama3_slack_finetuned', 
                       help='Directory containing the fine-tuned model (for testing)')
 
     args = parser.parse_args()
@@ -146,7 +146,6 @@ def main():
         if args.train:
             logging.info("Starting training workflow...")
             output_dir = train()
-
             if output_dir:
                 logging.info(f"Training completed successfully. Model saved to: {output_dir}")
             else:
