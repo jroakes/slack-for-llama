@@ -20,23 +20,25 @@ def setup_signal_handlers():
 def train() -> Optional[str]:
     """Run the training workflow."""
     try:
-        # Updated to use Llama 3.2 3B model
+        # Updated to use Llama 3.2 3B model with proper configuration
         model = "meta-llama/Llama-3.2-3B"
         model_dir = "llama3_slack_finetuned"
 
         logging.info("Starting data preprocessing...")
-        # Preprocess the data
+        # Preprocess the data with more detailed logging
         dataset, tokenizer = preprocess_data(model=model)
 
         if not dataset:
-            logging.error("Preprocessing failed")
+            logging.error("Preprocessing failed - no valid dataset created")
             return None
 
+        logging.info(f"Dataset created successfully - {len(dataset['train'])} training examples")
+        
         logging.info("Starting model fine-tuning...")
-        # Fine-tune the model
+        # Updated training configuration
         output_dir = fine_tune_model(
             dataset=dataset,
-            tokenizer=tokenizer,  # Pass the tokenizer to fine_tune_model
+            tokenizer=tokenizer,
             output_dir=model_dir,
             model_name=model
         )
@@ -44,8 +46,11 @@ def train() -> Optional[str]:
         return output_dir
 
     except Exception as e:
-        logging.error(f"Error in training execution: {e}")
+        logging.error(f"Error in training execution: {str(e)}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
         return None
+
 
 def chat_loop(model_path: str):
     """Run an interactive chat loop with the fine-tuned model."""
