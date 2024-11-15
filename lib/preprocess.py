@@ -1,9 +1,6 @@
 """Preprocess the data and save it to a file."""
 
-from transformers import AutoTokenizer
-import torch
 from lib.slack_extract import Slack
-from datetime import datetime
 from datasets import Dataset
 
 
@@ -41,8 +38,6 @@ def format_slack_data(data_dir: str = "data", output_file: str = "slack_conversa
     # Format messages as simple text entries
     dataset = []
     for message in human_content:
-        # Convert timestamp to readable format
-        timestamp = datetime.fromtimestamp(float(message["timestamp"])).strftime('%Y-%m-%d %H:%M:%S')
         # Format the message as simple text
         text = f"{message['user']}: {message['text']}"
         dataset.append(text)

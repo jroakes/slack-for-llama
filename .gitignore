@@ -5,6 +5,7 @@ data/
 data.zip
 wandb/
 example-llama3-training.py
+preprocessed_dataset.txt
 
 # Generated data files
 *.pt

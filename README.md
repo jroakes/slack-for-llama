@@ -272,3 +272,8 @@ print(text)
 trainer.model.save_pretrained(new_model)
 trainer.model.push_to_hub(new_model, use_temp_dir=False)
 ```
+
+
+Other Research:
+- Finetuning your own ME model: https://github.com/andrewvassili/finetuning-fun/blob/7a07ca783183583f86eb914efadcf58a21237469/finetuning-foundation-me.ipynb#L72
+- SFT Trainer Info: https://huggingface.co/docs/trl/en/sft_trainer
