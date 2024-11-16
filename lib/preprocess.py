@@ -3,9 +3,9 @@ from lib.slack_extract import Slack
 from datasets import Dataset
 from typing import List, Dict, Optional
 import re
-from transformers import AutoTokenizer
 import logging
 from pathlib import Path
+from lib.model_util import setup_tokenizer
 
 def get_user_real_name(slack_instance: Slack, user_id: str) -> str:
     """Get real name for a user ID."""
@@ -17,7 +17,7 @@ def get_user_real_name(slack_instance: Slack, user_id: str) -> str:
     return user_id
 
 def clean_text(text: str, slack_instance: Slack) -> str:
-    """Minimal cleaning to preserve conversation context."""
+    """Clean and normalize text while preserving context."""
     if not isinstance(text, str):
         return ""
     
@@ -83,21 +83,23 @@ def format_conversation_for_llama(
     slack_instance: Slack, 
     system_prompt: Optional[str] = None
 ) -> Dict:
-    """Format conversation for Llama chat format."""
+    """Format conversation into messages list."""
     formatted_messages = []
     
+    # Add system prompt if provided
     if system_prompt:
         formatted_messages.append({
             "role": "system",
             "content": system_prompt
         })
     
+    # Format conversation messages
     for msg in conv:
         cleaned_text = clean_text(msg.get('text', ''), slack_instance)
         if not cleaned_text:
             continue
         
-        # Assign user/assistant roles based on turn order
+        # Alternate between user/assistant roles
         role = "user" if len(formatted_messages) % 2 == (1 if system_prompt else 0) else "assistant"
         formatted_messages.append({
             "role": role,
@@ -106,65 +108,61 @@ def format_conversation_for_llama(
     
     return {"messages": formatted_messages}
 
-def prepare_conversation_pairs(formatted_data: List[Dict], tokenizer: AutoTokenizer) -> List[Dict]:
-    """Create training examples from conversations."""
-    training_examples = []
-    
-    for conv_data in formatted_data:
-        messages = conv_data["messages"]
-        if len(messages) < 2:
-            continue
-        
-        # Group all messages back and forth into a single example
-        formatted_chat = [
-            {"role": message["role"], "content": message["content"]}
-            for message in messages
-        ]
-        
-        # Create the "text" field in the desired format
-        example_text = tokenizer.apply_chat_template(formatted_chat, tokenize=False)
-        
-        training_examples.append({
-            "text": example_text,
-            "context_length": len(messages)
-        })
-    
-    return training_examples
-
 def create_dataset(
     conversation_data: List[Dict],
-    tokenizer: AutoTokenizer,
+    tokenizer,
     max_length: int = 2048
 ) -> Dataset:
     """Create dataset with length validation."""
-    training_examples = prepare_conversation_pairs(conversation_data, tokenizer)
-    
     filtered_examples = []
     skipped_count = 0
     
-    for example in training_examples:
-        tokens = tokenizer.encode(example["text"])
-        if len(tokens) <= max_length:
-            filtered_examples.append(example)
-        else:
+    # Process each conversation
+    for conv_data in conversation_data:
+        # Format using tokenizer's template
+        try:
+            text = tokenizer.apply_chat_template(
+                conv_data["messages"],
+                tokenize=False
+            )
+            
+            # Validate length
+            tokens = tokenizer.encode(text)
+            if len(tokens) <= max_length:
+                filtered_examples.append({
+                    "text": text,
+                    "messages": conv_data["messages"],
+                    "length": len(conv_data["messages"])
+                })
+            else:
+                skipped_count += 1
+                
+        except Exception as e:
+            logging.warning(f"Error processing conversation: {str(e)}")
             skipped_count += 1
+            continue
     
     if skipped_count > 0:
-        logging.warning(f"Skipped {skipped_count} examples due to length constraints")
+        logging.warning(f"Skipped {skipped_count} examples due to length constraints or processing errors")
     
+    if not filtered_examples:
+        raise ValueError("No valid examples found after filtering")
+    
+    # Create dataset
     dataset = Dataset.from_dict({
         "text": [ex["text"] for ex in filtered_examples],
-        "context_length": [ex["context_length"] for ex in filtered_examples]
+        "messages": [ex["messages"] for ex in filtered_examples],
+        "length": [ex["length"] for ex in filtered_examples]
     })
     
-    # Training/test split with logging
+    # Split and log
     dataset = dataset.train_test_split(test_size=0.1)
     logging.info(f"Created dataset with {len(dataset['train'])} training and {len(dataset['test'])} test examples")
     
     return dataset
 
 def preprocess_data(config: dict) -> Optional[Dataset]:
-    """Preprocess Slack data for fine-tuning using configuration."""
+    """Preprocess Slack data for fine-tuning."""
     try:
         # Extract configuration values
         data_dir = config['data']['data_dir']
@@ -175,11 +173,8 @@ def preprocess_data(config: dict) -> Optional[Dataset]:
         logging.info(f"Starting preprocessing with model: {model_name}")
         logging.info(f"Using data directory: {data_dir}")
         
-        # Initialize tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-            logging.info("Set pad_token to eos_token for tokenizer")
+        # Use consolidated tokenizer setup
+        tokenizer = setup_tokenizer(model_name, config)
         
         # Verify data directory exists
         data_path = Path(data_dir)
@@ -226,28 +221,29 @@ def preprocess_data(config: dict) -> Optional[Dataset]:
         for conv in conversations:
             formatted_conv = format_conversation_for_llama(conv, slack, system_prompt)
             if len(formatted_conv["messages"]) >= 2:  # Ensure meaningful conversations
-                formatted_data.append({"messages": formatted_conv["messages"]})
+                formatted_data.append(formatted_conv)
+        
+        logging.info(f"Formatted {len(formatted_data)} conversations")
         
         # Create dataset
         dataset = create_dataset(formatted_data, tokenizer, max_length)
         
-        # Log preprocessing completion
         if dataset:
             logging.info("Preprocessing completed successfully")
-        
-        # Save a sample of 5 examples to log file for verification
-        sample_size = min(5, len(dataset['train']))
-        log_path = Path(config['model'].get('output_dir', 'logs')) / 'dataset_sample.log'
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(log_path, 'w', encoding='utf-8') as f:
-            f.write("Dataset Sample:\n\n")
-            for i in range(sample_size):
-                f.write(f"Example {i+1}:\n")
-                f.write(f"{dataset['train'][i]['text']}\n")
-                f.write("-" * 80 + "\n")
-        
-        logging.info(f"Saved dataset sample to {log_path}")
+            
+            # Save sample for verification
+            sample_size = min(5, len(dataset['train']))
+            log_path = Path(config['model'].get('output_dir', 'llama3_finetuned')) / 'dataset_sample.log'
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(log_path, 'w', encoding='utf-8') as f:
+                f.write("Dataset Sample:\n\n")
+                for i in range(sample_size):
+                    f.write(f"Example {i+1}:\n")
+                    f.write(f"{dataset['train'][i]['text']}\n")
+                    f.write("-" * 80 + "\n")
+            
+            logging.info(f"Saved dataset sample to {log_path}")
         
         return dataset
         

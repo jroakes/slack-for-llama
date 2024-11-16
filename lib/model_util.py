@@ -17,6 +17,29 @@ import logging
 from pathlib import Path
 import json
 
+def setup_tokenizer(model_name: str, config: dict = None) -> "AutoTokenizer":
+    """Initialize tokenizer with consistent settings."""
+    logging.info(f"Initializing tokenizer for {model_name}")
+    
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_name,
+        padding_side="right",
+        truncation_side="left",
+        trust_remote_code=True
+    )
+    
+    # Set padding token if not set
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        logging.info("Set pad_token to eos_token")
+    
+    # Set chat template if not set
+    if not tokenizer.chat_template:
+        base_template = """<|begin_of_text|>{% for message in messages %}{% if message.role == 'system' %}System: {{ message.content }}\\n\\n{% elif message.role == 'user' %}Human: {{ message.content }}\\n{% elif message.role == 'assistant' %}Assistant: {{ message.content }}\\n\\n{% endif %}{% endfor %}"""
+        tokenizer.chat_template = base_template
+        logging.info("Set base model chat template")
+    
+    return tokenizer
 
 def get_compute_dtype(use_bf16: Optional[bool] = None) -> torch.dtype:
     """Determine optimal compute dtype based on hardware capabilities."""
@@ -27,7 +50,6 @@ def get_compute_dtype(use_bf16: Optional[bool] = None) -> torch.dtype:
         
     # Auto-detect if not specified
     return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-
 
 def get_quantization_config(config: dict, compute_dtype: torch.dtype) -> Optional[BitsAndBytesConfig]:
     """Create BitsAndBytes configuration based on settings."""
@@ -51,7 +73,6 @@ def get_quantization_config(config: dict, compute_dtype: torch.dtype) -> Optiona
         bnb_4bit_compute_dtype=compute_dtype,
         bnb_4bit_use_double_quant=quant_config.get('use_double_quant', True)
     )
-
 
 def setup_model_and_tokenizer(
     model_name: str,
@@ -89,18 +110,8 @@ def setup_model_and_tokenizer(
                 use_gradient_checkpointing=config.get('training', {}).get('gradient_checkpointing', True)
             )
         
-        # Load and configure tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            padding_side="right",
-            truncation_side="left",
-            trust_remote_code=True
-        )
-        
-        # Set padding token if not set
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-            
+        # Use consolidated tokenizer setup
+        tokenizer = setup_tokenizer(model_name, config)
         model.config.pad_token_id = tokenizer.pad_token_id
         
         logging.info(f"Successfully loaded model and tokenizer")
@@ -109,7 +120,6 @@ def setup_model_and_tokenizer(
     except Exception as e:
         logging.error(f"Error in setup_model_and_tokenizer: {str(e)}")
         raise
-
 
 def get_lora_config(model: AutoModelForCausalLM, config: dict) -> LoraConfig:
     """Get LoRA config optimized for conversational knowledge transfer."""
@@ -140,7 +150,6 @@ def get_lora_config(model: AutoModelForCausalLM, config: dict) -> LoraConfig:
     except Exception as e:
         logging.error(f"Error in get_lora_config: {str(e)}")
         raise
-
 
 def load_fine_tuned_model(
     model_path: str,
@@ -176,15 +185,9 @@ def load_fine_tuned_model(
         if inference_mode:
             model.eval()
         
-        # Load tokenizer with optimal settings
-        tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
+        # Use consolidated tokenizer setup
+        tokenizer = setup_tokenizer(model_path)
         
-        if tokenizer.pad_token is None:
-            tokenizer.pad_token = tokenizer.eos_token
-            
         # Log model configuration
         logging.info(f"Model loaded with device map: {device_map}")
         logging.info(f"Model dtype: {torch_dtype}")
@@ -195,13 +198,12 @@ def load_fine_tuned_model(
         logging.error(f"Error loading model: {str(e)}")
         return None, None
 
-
 def get_model_info(model_path: str) -> Optional[Dict]:
     """Get information about a trained model."""
     try:
         info = {}
         
-        # Load model card
+        # Load model card if available
         model_card_path = os.path.join(model_path, "model_card.json")
         if os.path.exists(model_card_path):
             with open(model_card_path, 'r') as f:

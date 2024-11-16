@@ -15,6 +15,7 @@ preprocessed_dataset.txt
 
 # Notebooks and documentation
 *.ipynb
+!demo.ipynb
 response.md
 all_code.txt
 
