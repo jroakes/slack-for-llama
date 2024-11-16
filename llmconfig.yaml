@@ -1,36 +1,46 @@
-# Model configuration
+
+# Core model configuration
 model:
   name: "meta-llama/Llama-3.2-3B"
-  output_dir: "llama3_slack_finetuned"
+  output_dir: "./llama3_finetuned"
+  quantization:
+    enabled: true
+    load_in_4bit: true  # Set to false if using 8-bit
+    load_in_8bit: false  # Set to true if using 8-bit
+    quant_type: "nf4"   # Options: "nf4", "fp4"
+    use_double_quant: true
 
-# Data configuration
+# Data processing settings
 data:
-  data_dir: "data"
-  max_seq_length: 3072
+  data_dir: "./data"
+  max_seq_length: 2048
+  conversation_window: 7200  # 2 hours in seconds
+  min_messages: 2
+  max_messages: 40
 
-# Training configuration
+# Core training parameters
 training:
   num_train_epochs: 3
-  learning_rate: 2.0e-4
-  warmup_ratio: 0.1
-  max_grad_norm: 0.3
   batch_size: 4
-  gradient_accumulation_steps: 2
-  evaluation_steps: 100
-  save_steps: 100
+  eval_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 2e-4
+  
+  # LoRA specific settings
+  lora:
+    rank: 32
+    alpha: 64
+    dropout: 0.1
+
+  # Early stopping configuration
   early_stopping:
     patience: 3
     threshold: 0.01
 
-# Chat configuration
-chat:
-  temperature: 0.7
-  top_p: 0.9
-  max_new_tokens: 512
-  repetition_penalty: 1.1
-  no_repeat_ngram_size: 3
-
-# System prompts
+# Prompt templates
 prompts:
-  training: "You are an AI assistant that embodies the communication style and knowledge from our Slack workspace. Respond naturally while maintaining our team's tone and context."
-  chat: "You are an AI assistant trained on our Slack conversations. Maintain our workspace's communication style and context."
+  # System prompt for training
+  training: "You are an AI assistant trained to embody the communication style and knowledge from our Slack workspace. Respond naturally while maintaining our team's tone and context."
+  
+  # System prompt for chat inference
+  chat: "You are an AI assistant trained on our team's communication style. Help users by providing responses that match our team's context and tone."

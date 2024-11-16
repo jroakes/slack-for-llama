@@ -82,7 +82,7 @@ def format_conversation_for_llama(
     conv: List[Dict], 
     slack_instance: Slack, 
     system_prompt: Optional[str] = None
-) -> List[Dict]:
+) -> Dict:
     """Format conversation for Llama chat format."""
     formatted_messages = []
     
@@ -97,16 +97,16 @@ def format_conversation_for_llama(
         if not cleaned_text:
             continue
         
-        # Alternate between user/assistant roles
-        user_msg = {
-            "role": "user" if len(formatted_messages) % 2 == (1 if system_prompt else 0) else "assistant",
+        # Assign user/assistant roles based on turn order
+        role = "user" if len(formatted_messages) % 2 == (1 if system_prompt else 0) else "assistant"
+        formatted_messages.append({
+            "role": role,
             "content": cleaned_text
-        }
-        formatted_messages.append(user_msg)
+        })
     
-    return formatted_messages
+    return {"messages": formatted_messages}
 
-def prepare_conversation_pairs(formatted_data: List[Dict]) -> List[Dict]:
+def prepare_conversation_pairs(formatted_data: List[Dict], tokenizer: AutoTokenizer) -> List[Dict]:
     """Create training examples from conversations."""
     training_examples = []
     
@@ -115,19 +115,19 @@ def prepare_conversation_pairs(formatted_data: List[Dict]) -> List[Dict]:
         if len(messages) < 2:
             continue
         
-        # Process each dialogue turn
-        for i in range(1, len(messages)-1, 2):
-            context_messages = messages[:i+1]
-            response = messages[i+1]["content"]
-            
-            if not response.strip():
-                continue
-            
-            example = {
-                "text": str(context_messages) + "\n\nResponse: " + response,
-                "context_length": len(context_messages)
-            }
-            training_examples.append(example)
+        # Group all messages back and forth into a single example
+        formatted_chat = [
+            {"role": message["role"], "content": message["content"]}
+            for message in messages
+        ]
+        
+        # Create the "text" field in the desired format
+        example_text = tokenizer.apply_chat_template(formatted_chat, tokenize=False)
+        
+        training_examples.append({
+            "text": example_text,
+            "context_length": len(messages)
+        })
     
     return training_examples
 
@@ -137,7 +137,7 @@ def create_dataset(
     max_length: int = 2048
 ) -> Dataset:
     """Create dataset with length validation."""
-    training_examples = prepare_conversation_pairs(conversation_data)
+    training_examples = prepare_conversation_pairs(conversation_data, tokenizer)
     
     filtered_examples = []
     skipped_count = 0
@@ -225,8 +225,8 @@ def preprocess_data(config: dict) -> Optional[Dataset]:
         formatted_data = []
         for conv in conversations:
             formatted_conv = format_conversation_for_llama(conv, slack, system_prompt)
-            if len(formatted_conv) >= 2:  # Ensure meaningful conversations
-                formatted_data.append({"messages": formatted_conv})
+            if len(formatted_conv["messages"]) >= 2:  # Ensure meaningful conversations
+                formatted_data.append({"messages": formatted_conv["messages"]})
         
         # Create dataset
         dataset = create_dataset(formatted_data, tokenizer, max_length)
@@ -235,7 +235,7 @@ def preprocess_data(config: dict) -> Optional[Dataset]:
         if dataset:
             logging.info("Preprocessing completed successfully")
         
-        # Save sample to log file for verification
+        # Save a sample of 5 examples to log file for verification
         sample_size = min(5, len(dataset['train']))
         log_path = Path(config['model'].get('output_dir', 'logs')) / 'dataset_sample.log'
         log_path.parent.mkdir(parents=True, exist_ok=True)
