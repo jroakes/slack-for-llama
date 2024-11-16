@@ -1,0 +1,36 @@
+# Model configuration
+model:
+  name: "meta-llama/Llama-3.2-3B"
+  output_dir: "llama3_slack_finetuned"
+
+# Data configuration
+data:
+  data_dir: "data"
+  max_seq_length: 3072
+
+# Training configuration
+training:
+  num_train_epochs: 3
+  learning_rate: 2.0e-4
+  warmup_ratio: 0.1
+  max_grad_norm: 0.3
+  batch_size: 4
+  gradient_accumulation_steps: 2
+  evaluation_steps: 100
+  save_steps: 100
+  early_stopping:
+    patience: 3
+    threshold: 0.01
+
+# Chat configuration
+chat:
+  temperature: 0.7
+  top_p: 0.9
+  max_new_tokens: 512
+  repetition_penalty: 1.1
+  no_repeat_ngram_size: 3
+
+# System prompts
+prompts:
+  training: "You are an AI assistant that embodies the communication style and knowledge from our Slack workspace. Respond naturally while maintaining our team's tone and context."
+  chat: "You are an AI assistant trained on our Slack conversations. Maintain our workspace's communication style and context."

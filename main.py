@@ -1,122 +1,189 @@
-"""Main File for the application."""
-
+"""Main entry point for Slack conversation model training and testing."""
 import logging
 import argparse
-import signal
 import sys
-from typing import Optional, Union
+import os
+from typing import Optional
+import yaml
+from yaml import SafeLoader
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
 from lib.preprocess import preprocess_data
-from lib.training import fine_tune_model
-from datasets import Dataset
+from lib.training import fine_tune_model, load_fine_tuned_model
 
-def setup_signal_handlers():
-    def signal_handler(sig, frame):
-        print("\nGracefully exiting...")
-        sys.exit(0)
-    signal.signal(signal.SIGINT, signal_handler)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
-def train(output_dataset_path: Optional[str] = None, preprocess_only: bool = False) -> Optional[Union[str, Dataset]]:
-    """Run the training workflow.
-
-    Args:
-        output_dataset_path (Optional[str]): Path to save the preprocessed dataset.
-        preprocess_only (bool): If True, only preprocess the data and return the dataset.
-
-    Returns:
-        Optional[Union[str, Dataset]]: Path to the output model directory if successful, None otherwise
-                           or the preprocessed dataset if output_dataset_path and preprocess_only are True.
-    """
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file."""
     try:
-        # Updated to use Llama 3.2 3B model
-        model = "meta-llama/Llama-3.2-3B"
-        model_dir = "llama3_slack_finetuned"
+        with open(config_path, 'r') as f:
+            config = yaml.load(f, Loader=SafeLoader)
+        
+        # Validate essential config sections
+        required_sections = ['model', 'data', 'training', 'chat', 'prompts']
+        for section in required_sections:
+            if section not in config:
+                raise ValueError(f"Missing required config section: {section}")
+        
+        return config
+    except Exception as e:
+        logging.error(f"Error loading config: {str(e)}")
+        raise
 
-        logging.info("Starting data preprocessing...")
-        # Preprocess the data
-        dataset = preprocess_data(model=model)
-
+def train(config: dict) -> Optional[str]:
+    """Run the training workflow."""
+    try:
+        # Validate model configuration
+        if 'model' not in config:
+            raise ValueError("Model configuration missing in config file")
+            
+        # Get model configuration
+        model_name = config['model'].get('name')
+        if not model_name:
+            raise ValueError("Model name not specified in config file")
+            
+        model_dir = config['model'].get('output_dir', "llama3_slack_finetuned")
+        
+        logging.info(f"Using model: {model_name}")
+        
+        # Preprocess with settings from config
+        dataset = preprocess_data(config)
+        
         if not dataset:
             logging.error("Preprocessing failed")
             return None
-
-        if output_dataset_path:
-            logging.info(f"Saving preprocessed dataset to {output_dataset_path}")
-            with open(output_dataset_path, "w", encoding="utf-8") as f:
-                for item in dataset["train"]:  # Save only the training split
-                    f.write(item["text"] + "\n")
-            if preprocess_only:
-                return dataset
-
-        if preprocess_only:
-            return dataset
-
-
+        
+        # Setup training configuration from config file
+        training_config = config.get('training', {})
+        
         logging.info("Starting model fine-tuning...")
-        # Fine-tune the model
         output_dir = fine_tune_model(
             dataset=dataset,
             output_dir=model_dir,
-            model_name=model
+            config=config
         )
-
+        
         return output_dir
-
+        
     except Exception as e:
-        logging.error(f"Error in training execution: {e}")
+        logging.error(f"Training error: {str(e)}")
         return None
 
-def chat_loop(model_path: str):
-    """Run an interactive chat loop with the fine-tuned model.
+def chat_loop(model_path: str, config: dict):
+    """Interactive chat loop with fine-tuned model."""
+    try:
+        # Load model with optimal inference settings
+        model, tokenizer = load_fine_tuned_model(model_path)
 
-    Args:
-        model_path: Path to the fine-tuned model directory
-    """
-    # ... (rest of the chat_loop function remains unchanged)
+        if not model or not tokenizer:
+            logging.error("Failed to load model or tokenizer.")
+            return
+
+        # Configure tokenizer
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.padding_side = "left"
+
+        # Get chat configuration
+        chat_config = config.get('chat', {})
+        system_prompt = config.get('prompts', {}).get('chat', '')
+
+        print("\nChat session started. Type 'exit' to end or 'new' for new conversation.")
+        
+        conversation_history = [{
+            "role": "system", 
+            "content": system_prompt
+        }]
+        
+        while True:
+            user_input = input("\nYou: ").strip()
+            
+            if user_input.lower() == 'exit':
+                break
+            elif user_input.lower() == 'new':
+                conversation_history = [conversation_history[0]]
+                print("\nStarting new conversation...")
+                continue
+            
+            # Add user input to conversation
+            conversation_history.append({"role": "user", "content": user_input})
+            
+            # Generate response with proper attention mask
+            inputs = tokenizer.apply_chat_template(
+                conversation_history,
+                add_generation_prompt=True,
+                return_tensors="pt"
+            ).to(model.device)
+            
+            attention_mask = torch.ones_like(inputs)
+            attention_mask[inputs == tokenizer.pad_token_id] = 0
+            
+            outputs = model.generate(
+                inputs,
+                attention_mask=attention_mask,
+                max_new_tokens=chat_config.get('max_new_tokens', 512),
+                temperature=chat_config.get('temperature', 0.7),
+                top_p=chat_config.get('top_p', 0.9),
+                do_sample=True,
+                pad_token_id=tokenizer.pad_token_id,
+                eos_token_id=tokenizer.eos_token_id,
+                repetition_penalty=chat_config.get('repetition_penalty', 1.1),
+                no_repeat_ngram_size=chat_config.get('no_repeat_ngram_size', 3)
+            )
+            
+            response = tokenizer.decode(
+                outputs[0][inputs.shape[-1]:],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=True
+            ).strip()
+            
+            # Clean up response
+            response = response.replace("Assistant:", "").replace("User:", "").strip()
+            print(f"\nAssistant: {response}")
+            conversation_history.append({"role": "assistant", "content": response})
+            
+    except Exception as e:
+        logging.error(f"Chat error: {str(e)}")
+        print("\nError occurred. Chat session ended.")
 
 def main():
     """Main entry point with argument parsing."""
-    parser = argparse.ArgumentParser(description='Slack conversation model training and testing')
-    parser.add_argument('--train', action='store_true', help='Run the training workflow')
-    parser.add_argument('--test', action='store_true', help='Start an interactive chat session with the trained model')
-    parser.add_argument('--model-dir', type=str, default='llama3_slack_finetuned',
-                      help='Directory containing the fine-tuned model (for testing)')
-    parser.add_argument('--output-dataset', type=str, help='Path to save the preprocessed dataset')
-    parser.add_argument('--preprocess-only', action='store_true', help='Only preprocess the data and save it to the output dataset path.')
-
-
+    parser = argparse.ArgumentParser(description='Slack conversation model training and chat')
+    parser.add_argument('--train', action='store_true', help='Run training')
+    parser.add_argument('--chat', action='store_true', help='Start chat session')
+    parser.add_argument('--config', type=str, default='llmconfig.yaml', help='Path to config file')
+    parser.add_argument('--model-dir', type=str, help='Model directory for chat (overrides config)')
+    
     args = parser.parse_args()
-
-    # Setup logging
-    logging.basicConfig(level=logging.INFO)
-
-    # Setup signal handlers for graceful exit
-    setup_signal_handlers()
-
-    if not (args.train or args.test or args.preprocess_only):
+    
+    if not (args.train or args.chat):
         parser.print_help()
         sys.exit(1)
-
+    
     try:
-        if args.train or args.preprocess_only:
-            logging.info("Starting training workflow...")
-            output = train(output_dataset_path=args.output_dataset, preprocess_only=args.preprocess_only)
-            if isinstance(output, str):
-                logging.info(f"Training completed successfully. Model saved to: {output}")
-            elif isinstance(output, Dataset):
-                logging.info("Preprocessing completed successfully. Dataset saved to specified path.")
+        # Load config
+        config = load_config(args.config)
+        
+        if args.train:
+            output = train(config)
+            if output:
+                print(f"Training completed. Model saved to: {output}")
             else:
-                logging.error("Training/Preprocessing failed")
+                print("Training failed")
                 sys.exit(1)
-
-        if args.test:
-            logging.info(f"Starting chat session with model from: {args.model_dir}")
-            chat_loop(args.model_dir)
-
+        
+        if args.chat:
+            model_dir = args.model_dir or config['model']['output_dir']
+            chat_loop(model_dir, config)
+            
     except KeyboardInterrupt:
-        print("\nGracefully exiting...")
+        print("\nExiting...")
         sys.exit(0)
     except Exception as e:
-        logging.error(f"An error occurred: {e}")
+        logging.error(f"Error: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
