@@ -11,13 +11,13 @@ from peft import (
     prepare_model_for_kbit_training
 )
 import torch
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Union
 import os
 import logging
 from pathlib import Path
 import json
 
-def setup_tokenizer(model_name: str, config: dict = None) -> "AutoTokenizer":
+def setup_tokenizer(model_name: str, config: dict = None) -> AutoTokenizer:
     """Initialize tokenizer with consistent settings."""
     logging.info(f"Initializing tokenizer for {model_name}")
     
@@ -34,10 +34,13 @@ def setup_tokenizer(model_name: str, config: dict = None) -> "AutoTokenizer":
         logging.info("Set pad_token to eos_token")
     
     # Set chat template if not set
-    if not tokenizer.chat_template:
-        base_template = """<|begin_of_text|>{% for message in messages %}{% if message.role == 'system' %}System: {{ message.content }}\\n\\n{% elif message.role == 'user' %}Human: {{ message.content }}\\n{% elif message.role == 'assistant' %}Assistant: {{ message.content }}\\n\\n{% endif %}{% endfor %}"""
-        tokenizer.chat_template = base_template
-        logging.info("Set base model chat template")
+    try:
+        if not tokenizer.chat_template:
+            base_template = """<|begin_of_text|>{% for message in messages %}{% if message.role == 'system' %}System: {{ message.content }}\\n\\n{% elif message.role == 'user' %}Human: {{ message.content }}\\n{% elif message.role == 'assistant' %}Assistant: {{ message.content }}\\n\\n{% endif %}{% endfor %}"""
+            tokenizer.chat_template = base_template
+            logging.info("Set base model chat template")
+    except Exception as e:
+        logging.warning(f"Error setting chat template: {str(e)}")
     
     return tokenizer
 

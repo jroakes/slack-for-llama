@@ -3,7 +3,7 @@ from transformers import (
     TrainingArguments,
     EarlyStoppingCallback
 )
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 import torch
 from typing import Optional, Dict, Tuple
 import os
@@ -24,10 +24,13 @@ def save_training_config(output_dir: str, config: dict):
     except Exception as e:
         logging.warning(f"Failed to save training configuration: {str(e)}")
 
-def get_training_args(output_dir: str, training_cfg: dict) -> TrainingArguments:
+def get_training_args(output_dir: str, training_cfg: dict, data_cfg: dict) -> TrainingArguments:
     """Create training arguments from configuration."""
-    return TrainingArguments(
+
+    return SFTConfig(
         output_dir=output_dir,
+        max_seq_length=int(data_cfg.get('max_seq_length', 2048)),
+        dataset_text_field="text",
         run_name=f"llama3_training_{Path(output_dir).name}",
         num_train_epochs=float(training_cfg.get('num_train_epochs', 3)),
         per_device_train_batch_size=int(training_cfg.get('batch_size', 4)),
@@ -66,8 +69,11 @@ def setup_trainer(
     config: dict
 ) -> SFTTrainer:
     """Initialize and configure the trainer."""
+
+
     early_stopping_patience = int(config['training'].get('early_stopping', {}).get('patience', 3))
     early_stopping_threshold = float(config['training'].get('early_stopping', {}).get('threshold', 0.01))
+
 
     return SFTTrainer(
         model=model,
@@ -76,14 +82,12 @@ def setup_trainer(
         args=training_args,
         peft_config=lora_config,
         tokenizer=tokenizer,
-        max_seq_length=int(config['data'].get('max_seq_length', 2048)),
         callbacks=[
             EarlyStoppingCallback(
                 early_stopping_patience=early_stopping_patience,
                 early_stopping_threshold=early_stopping_threshold
             )
         ],
-        dataset_text_field="text",
         packing=False
     )
 
@@ -161,7 +165,7 @@ def fine_tune_model(
         model = get_peft_model(model, lora_config)
         
         # Setup training arguments
-        training_args = get_training_args(output_dir, config['training'])
+        training_args = get_training_args(output_dir, config['training'], config['data'])
         
         # Initialize trainer with preprocessed dataset
         trainer = setup_trainer(
