@@ -37,6 +37,12 @@ training:
     patience: 3
     threshold: 0.01
 
+
+  wandb:
+  project: "slack-for-llama"
+  run_name: "llama3-finetune"
+
+
 # Prompt templates
 prompts:
   # System prompt for training

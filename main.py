@@ -7,7 +7,7 @@ from typing import Optional
 import yaml
 from yaml import SafeLoader
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria, StoppingCriteriaList
 from lib.preprocess import preprocess_data
 from lib.model_util import load_fine_tuned_model, get_model_info
 from lib.training import fine_tune_model
@@ -21,6 +21,33 @@ logging.basicConfig(
         logging.FileHandler('training.log')
     ]
 )
+
+
+# Custom stopping criteria for chat
+class ChatStoppingCriteria(StoppingCriteria):
+    def __init__(self, tokenizer, stops=None):
+        super().__init__()
+        self.stops = stops or ["Human:", "human:", "Assistant:", "assistant:"]
+        self.tokenizer = tokenizer
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
+        if input_ids is None or input_ids.shape[1] == 0:
+            return False
+
+        # Check if input_ids is too short to decode
+        if input_ids.shape[0] < 3:
+            return False
+        
+        # Decode the last part of the input_ids
+        decoded = self.tokenizer.decode(input_ids[0], skip_special_tokens=True)
+        
+        # Check for any of the stop strings at the end of the decoded sequence
+        for stop in self.stops:
+            if decoded.endswith(stop):
+                return True
+        return False
+
+
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file."""
@@ -109,6 +136,7 @@ def train(config: dict) -> Optional[str]:
         logging.error(f"Training error: {str(e)}")
         return None
 
+
 def chat_loop(model_path: str, config: dict):
     """Interactive chat loop with fine-tuned model."""
     try:
@@ -129,12 +157,16 @@ def chat_loop(model_path: str, config: dict):
         print("\nChat session started. Commands:")
         print("- 'exit': End the session")
         print("- 'new': Start a new conversation")
+        print("- 'clear_history': Clear conversation history")
         print("- 'info': Show model information")
         
         conversation_history = [{
             "role": "system", 
             "content": system_prompt
         }]
+        
+        # Initialize stopping criteria with tokenizer
+        stopping_criteria = StoppingCriteriaList([ChatStoppingCriteria(tokenizer)])
         
         while True:
             user_input = input("\nYou: ").strip()
@@ -144,6 +176,10 @@ def chat_loop(model_path: str, config: dict):
             elif user_input.lower() == 'new':
                 conversation_history = [conversation_history[0]]
                 print("\nStarting new conversation...")
+                continue
+            elif user_input.lower() == 'clear_history':
+                conversation_history = [conversation_history[0]]
+                print("\nConversation history cleared...")
                 continue
             elif user_input.lower() == 'info':
                 model_info = get_model_info(model_path)
@@ -177,7 +213,8 @@ def chat_loop(model_path: str, config: dict):
                 pad_token_id=tokenizer.pad_token_id,
                 eos_token_id=tokenizer.eos_token_id,
                 repetition_penalty=chat_config.get('repetition_penalty', 1.1),
-                no_repeat_ngram_size=chat_config.get('no_repeat_ngram_size', 3)
+                no_repeat_ngram_size=chat_config.get('no_repeat_ngram_size', 3),
+                stopping_criteria=stopping_criteria
             )
             
             response = tokenizer.decode(
@@ -186,14 +223,15 @@ def chat_loop(model_path: str, config: dict):
                 clean_up_tokenization_spaces=True
             ).strip()
             
-            # Clean up and print response
-            response = response.replace("Assistant:", "").replace("User:", "").strip()
-            print(f"\nAssistant: {response}")
+            # Clean up response
+            print(f"\n{response}")
             conversation_history.append({"role": "assistant", "content": response})
             
     except Exception as e:
         logging.error(f"Chat error: {str(e)}")
         print("\nError occurred. Chat session ended.")
+
+
 
 def main():
     """Main entry point with argument parsing."""

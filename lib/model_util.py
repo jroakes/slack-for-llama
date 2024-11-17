@@ -17,6 +17,17 @@ import logging
 from pathlib import Path
 import json
 
+# Enable TF32 for matrix multiplications
+torch.backends.cuda.matmul.allow_tf32 = True
+
+def has_multiple_gpus() -> bool:
+    """Check if multiple GPUs are available."""
+    if torch.cuda.is_available():
+        gpu_count = torch.cuda.device_count()
+        logging.info(f"Found {gpu_count} GPUs")
+        return gpu_count > 1
+    return False
+
 def setup_tokenizer(model_name: str, config: dict = None) -> AutoTokenizer:
     """Initialize tokenizer with consistent settings."""
     logging.info(f"Initializing tokenizer for {model_name}")
@@ -58,15 +69,26 @@ def get_quantization_config(config: dict, compute_dtype: torch.dtype) -> Optiona
     """Create BitsAndBytes configuration based on settings."""
     quant_config = config.get('model', {}).get('quantization', {})
     
+    # Check for multiple GPUs and disable quantization if found
+    if has_multiple_gpus():
+        logging.info("Multiple GPUs detected - disabling quantization")
+        return None
+    
     # Return None if quantization is disabled
     if not quant_config.get('enabled', True):
+        logging.info("Quantization disabled in config")
         return None
         
     # Determine quantization mode
     load_in_4bit = quant_config.get('load_in_4bit', True)
     load_in_8bit = quant_config.get('load_in_8bit', False) if not load_in_4bit else False
     
-    if not (load_in_4bit or load_in_8bit):
+    if load_in_4bit:
+        logging.info("Quantization enabled: Loading in 4-bit")
+    elif load_in_8bit:
+        logging.info("Quantization enabled: Loading in 8-bit")
+    else:
+        logging.info("No valid quantization mode specified (4-bit or 8-bit)")
         return None
         
     return BitsAndBytesConfig(
@@ -105,6 +127,9 @@ def setup_model_and_tokenizer(
             torch_dtype=torch_dtype,
             trust_remote_code=True
         )
+
+        # Enable Flash Attention SDP
+        torch.backends.cuda.enable_flash_sdp(True)
         
         # Prepare model for k-bit training if using quantization
         if bnb_config:
@@ -115,7 +140,10 @@ def setup_model_and_tokenizer(
         
         # Use consolidated tokenizer setup
         tokenizer = setup_tokenizer(model_name, config)
-        model.config.pad_token_id = tokenizer.pad_token_id
+
+        # Set pad_token_id if it's not already set
+        if model.config.pad_token_id is None:
+            model.config.pad_token_id = tokenizer.pad_token_id
         
         logging.info(f"Successfully loaded model and tokenizer")
         return model, tokenizer
